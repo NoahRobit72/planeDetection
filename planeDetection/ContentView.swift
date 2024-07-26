@@ -37,35 +37,38 @@ class ARViewModel: ObservableObject {
     func placeRectangleOnFloor(width: Float, height: Float, rotationAngle: Float) {
         guard let arView = arView else { return }
         
+        // Create the rectangle mesh
+        let mesh = MeshResource.generatePlane(width: width, height: height)
+        let material = SimpleMaterial(color: .black, roughness: 0.5, isMetallic: true)
+        let rectangleEntity = ModelEntity(mesh: mesh, materials: [material, material])
+        
         let raycastResult = arView.raycast(from: arView.center,
                                            allowing: .estimatedPlane,
                                            alignment: .horizontal)
         
-        guard let result = raycastResult.first else { return }
-        
-        // Create an anchor at the raycast hit point
-        let anchor = AnchorEntity(world: result.worldTransform)
-        
-        // Create the rectangle mesh
-        let mesh = MeshResource.generatePlane(width: width, height: height)
-        let material = SimpleMaterial(color: .black, isMetallic: true)
-        let rectangleEntity = ModelEntity(mesh: mesh, materials: [material])
-        
-        // Rotate the rectangle to lay flat on the floor
-        var transform = Transform.identity
-        transform.rotation = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
-        
-        // Apply the specified rotation around the Y-axis
-        let yRotation = simd_quatf(angle: rotationAngle, axis: [0, 1, 0])
-        transform.rotation = yRotation * transform.rotation
-        
-        rectangleEntity.transform = transform
-        
-        // Add the rectangle to the anchor
-        anchor.addChild(rectangleEntity)
-        
-        // Add the anchor to the scene
-        arView.scene.addAnchor(anchor)
+        if let result = raycastResult.first {
+            let anchor = AnchorEntity(world: result.worldTransform)
+
+            // Create a translation that lifts the plane above the surface
+            let liftTranslation = SIMD3<Float>(0, 0.01, 0)  // Lift by 0.5 units
+
+            // Rotate -90 degrees (or 270 degrees) around X-axis to make it horizontal and face up
+            let rotationX = simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
+
+            // Set the transform
+            rectangleEntity.transform = Transform(
+                scale: .one,
+                rotation: rotationX,
+                translation: liftTranslation
+            )
+
+            // Add the rectangle to the anchor
+            anchor.addChild(rectangleEntity)
+            
+            // Add the anchor to the scene
+            arView.scene.addAnchor(anchor)
+        }
+    
     }
 
     func placeSphere() {
