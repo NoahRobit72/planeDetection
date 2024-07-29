@@ -48,27 +48,26 @@ class ARViewModel: ObservableObject {
         
         if let result = raycastResult.first {
             let anchor = AnchorEntity(world: result.worldTransform)
-
+            
             // Create a translation that lifts the plane above the surface
-            let liftTranslation = SIMD3<Float>(0, 0.01, 0)  // Lift by 0.5 units
-
-            // Rotate -90 degrees (or 270 degrees) around X-axis to make it horizontal and face up
+            let liftTranslation = SIMD3<Float>(0, 0.01, 0)  // Lift by 1cm
+            
+            // Rotate 90 degrees around X-axis to make it horizontal
             let rotationX = simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
-
+            
             // Set the transform
             rectangleEntity.transform = Transform(
                 scale: .one,
                 rotation: rotationX,
                 translation: liftTranslation
             )
-
+            
             // Add the rectangle to the anchor
             anchor.addChild(rectangleEntity)
             
             // Add the anchor to the scene
             arView.scene.addAnchor(anchor)
         }
-    
     }
 
     func placeSphere() {
