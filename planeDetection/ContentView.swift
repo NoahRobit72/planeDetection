@@ -57,6 +57,19 @@ struct ContentView: View {
                         .foregroundColor(.white)
                         .cornerRadius(10)
                 }
+                
+                // Send Data
+                Button(action: {
+                    // Change app state
+                    print("Sending waypoints now")
+                    arViewModel.printWaypoints()
+                }) {
+                    Text("Send Waypoints")
+                        .padding()
+                        .background(buttonColor)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                }
 
             }
             .background(.gray)
@@ -83,25 +96,24 @@ struct ContentView: View {
 
 class ARViewModel: ObservableObject {
     @Published var arView: ARView?
-    @Published var frameSpheres: [(UUID, SIMD3<Float>)] = []
-    @Published var waypointSpheres: [(UUID, SIMD3<Float>)] = []
-
-    var pathLines: [UUID: ModelEntity] = [:]
-    var pathEndpoints: [UUID: ModelEntity] = [:]
-    let deleteMargin: Float = 0.1
-    
-    
-    // types of structures
+    // Types of structures
     
     // FRAME:
     // frame spheres: UUID, position, model
     // frame lines: UUID, models
-    
+    @Published var frameSpheres: [(UUID, SIMD3<Float>, ModelEntity)] = []
+    @Published var frameLines: [(UUID, ModelEntity)] = []
+
     // WAYPOINTS:
     // waypoint spheres: UUID, position, model
     // Waypoint lines: UUID, models
+    @Published var waypointSpheres: [(UUID, SIMD3<Float>, ModelEntity)] = []
+    @Published var waypointLines: [(UUID, ModelEntity)] = []
 
-
+    //                  //
+    // Helper Functions //
+    //                  //
+    
     func angleAndTranslation(point1: SIMD3<Float>, point2: SIMD3<Float>) -> (returnAngle: Float, xdif: Float, zdif: Float){
         let xdif = point2.x - point1.x
         let zdif = point2.z - point1.z
@@ -109,8 +121,24 @@ class ARViewModel: ObservableObject {
         return (returnAngle, xdif, zdif)
     }
     
+    func printWaypoints(){
+        print("Waypoint Coordinates (x, z):")
+        for (_, position, _) in waypointSpheres {
+            let x = position.x
+            let z = position.z
+            print("x: \(x), z: \(z)")
+        }
+    }
+    
+    
+    //                       //
+    //      Line Creators    //
+    //                       //
+    
     // Create the lines for the field of play
     func createFrame(){
+        guard let arView = arView else { return }
+        
         var nextPoint = 1
         for i in 0...3 {
             print("=========================================")
@@ -119,7 +147,14 @@ class ARViewModel: ObservableObject {
             print("The next sphere is: \(frameSpheres[nextPoint])")
             
             // Create Lines
-            drawFrame(point1: frameSpheres[i].1, point2: frameSpheres[nextPoint].1)
+            let anchorEntity = AnchorEntity(world: frameSpheres[i].1)
+            let lineID = UUID()
+            let lineEntity = createLine(from: frameSpheres[i].1, to:  frameSpheres[nextPoint].1, parent: anchorEntity )
+            
+            frameLines.append((lineID, lineEntity))
+
+            // Add the anchor to the scene
+            arView.scene.addAnchor(anchorEntity)
             
             nextPoint = nextPoint + 1
             if(nextPoint == 4) {nextPoint = 0}
@@ -128,16 +163,19 @@ class ARViewModel: ObservableObject {
     
     // Create the lines for the robot path
     func createPath(){
+        guard let arView = arView else { return }
+        
         print("=========================================")
-        print("Creating a new path with \(pathLines.count) lines")
+        print("Creating a new path with \(waypointLines.count) lines")
         
         // if line entieies is not 0, delete lines
-        if(pathLines.count != 0){
-            for (uuid, _) in pathLines {
+        if(waypointLines.count != 0){
+            for (uuid, _) in waypointLines {
                 deleteLine(lineID: uuid)
             }
         }
         
+        if(waypointSpheres.count == 1){return}
         var nextPoint = 1
         for i in 0...(waypointSpheres.count - 1) {
             print("--------------------------")
@@ -145,8 +183,16 @@ class ARViewModel: ObservableObject {
             print("The current sphere is: \(waypointSpheres[i])")
             print("The next sphere is: \(waypointSpheres[nextPoint])")
             
-            // Create Lines
-            drawPath(point1: waypointSpheres[i].1, point2: waypointSpheres[nextPoint].1)
+            // Create Line
+            
+            let anchorEntity = AnchorEntity(world: waypointSpheres[i].1)
+            let lineID = UUID()
+            let lineEntity = createLine(from: waypointSpheres[i].1, to: waypointSpheres[nextPoint].1, parent: anchorEntity)
+            
+            waypointLines.append((lineID, lineEntity))
+                    
+            // Add the anchor to the scene
+            arView.scene.addAnchor(anchorEntity)
             
             nextPoint = nextPoint + 1
             if(nextPoint == waypointSpheres.count) {nextPoint = 0}
@@ -154,52 +200,88 @@ class ARViewModel: ObservableObject {
         print("=========================================")
     }
     
+    
+    
+    //                                  //
+    //              Delete              //
+    //                                  //
+    
     // Delete lines for the robot path
     func deleteLine(lineID: UUID) {
-        guard let lineEntity = pathLines[lineID] else { return }
+        guard let lineEntity = waypointLines.first(where: { $0.0 == lineID })?.1 else {return}
+                
         lineEntity.removeFromParent()
-        pathLines.removeValue(forKey: lineID)
+        waypointLines = waypointLines.filter { $0.0 != lineID }
     }
     
     // Delete poiint for the robot path
     func deleteWaypoint(lineID: UUID) {
-        guard let lineEntity = pathEndpoints[lineID] else { return }
+        guard let pointEntity = waypointSpheres.first(where: { $0.0 == lineID })?.2 else {return}
         
+        pointEntity.removeFromParent()
         waypointSpheres = waypointSpheres.filter { $0.0 != lineID }
-        
-        lineEntity.removeFromParent()
-        pathEndpoints.removeValue(forKey: lineID)
     }
     
+    // This function will be to delete a sphere
+    func deleteSphere(){
+        guard let arView = arView else { return }
+        
+        var smallestUUID = UUID()
+        var smallestDistance: Float = 10000;
+
+        
+        print("Delete Function Called")
+        
+        // check to see if there are any waypoints
+        print("There are \(waypointSpheres.count) waypoints in the robot path")
+        
+        if (waypointSpheres.count < 1){print("No points to delete")}
+        
+        //find the closest point
+        else{
+            // shoot out a raycast
+            let raycastResult = arView.raycast(from: arView.center,
+                                               allowing: .estimatedPlane,
+                                               alignment: .horizontal)
+            
+            if let result = raycastResult.first {
+                let anchor = AnchorEntity(world: result.worldTransform)
+                
+                // Save the position of the placed sphere
+                let position = result.worldTransform.columns.3
+                let spherePosition = SIMD3<Float>(position.x, position.y, position.z)
+                
+                for (uuid, position, _) in waypointSpheres {
+                    let currentDistance = distance(spherePosition, position)
+                    
+                    if (currentDistance < smallestDistance){
+                        smallestUUID = uuid
+                        smallestDistance = currentDistance
+                    }
+                }
+            }
+            
+            print("Deleting Sphere with UUID: \(smallestUUID)")
+            
+            // Delete the sphere
+            guard let pointEntity = waypointSpheres.first(where: { $0.0 == smallestUUID })?.2 else {return}
+            pointEntity.removeFromParent()
+            waypointSpheres = waypointSpheres.filter { $0.0 != smallestUUID }
+            
+            // Recreate the path
+            createPath()
+
+        }
+    }
+    
+    //                                  //
+    //              Draw                //
+    //                                  //
+
     // Draw the lines for the robot path
     func drawPath(point1: SIMD3<Float>, point2: SIMD3<Float>) {
-        guard let arView = arView else { return }
+
         
-        // Create an anchor at the origin of the world coordinate system
-        let anchorEntity = AnchorEntity(world: point1)
-                
-        // Call the createLine function with the two points
-        let lineID = UUID()
-        let lineEntity = createLine(from: point1, to: point2, parent: anchorEntity )
-        pathLines[lineID] = lineEntity
-        
-        // Add the anchor to the scene
-        arView.scene.addAnchor(anchorEntity)
-        
-    }
-    
-    // Draw the lines for the field of play
-    func drawFrame(point1: SIMD3<Float>, point2: SIMD3<Float>) {
-        guard let arView = arView else { return }
-        
-        // Create an anchor at the origin of the world coordinate system
-        let anchorEntity = AnchorEntity(world: point1)
-                
-        // Call the createLine function with the two points
-        let _ = createLine(from: point1, to: point2, parent: anchorEntity )
-        
-        // Add the anchor to the scene
-        arView.scene.addAnchor(anchorEntity)
     }
     
     // Create a line given two paths
@@ -220,64 +302,14 @@ class ARViewModel: ObservableObject {
         return lineEntity
     }
     
-    // This function will be to delete a sphere
-    func deleteSphere(){
-        guard let arView = arView else { return }
-        
-        var smallestUUID = UUID()
-        var smallestDistance: Float = 10000;
 
-        
-        print("Delete Function Called")
-        
-        // check to see if there are any waypoints
-        print("There are \(pathEndpoints.count) waypoints in the robot path")
-        
-        if (pathEndpoints.count < 1){print("No points to delete")}
-        
-        //find the closest point
-        else{
-            // shoot out a raycast
-            let raycastResult = arView.raycast(from: arView.center,
-                                               allowing: .estimatedPlane,
-                                               alignment: .horizontal)
-            
-            if let result = raycastResult.first {
-                let anchor = AnchorEntity(world: result.worldTransform)
-                
-                // Save the position of the placed sphere
-                let position = result.worldTransform.columns.3
-                let spherePosition = SIMD3<Float>(position.x, position.y, position.z)
-                
-                for (uuid, position) in waypointSpheres {
-                    let currentDistance = distance(spherePosition, position)
-                    if (currentDistance < smallestDistance){smallestUUID = uuid}
-                }
-            }
-            
-            print("Deleting Sphere with UUID: \(smallestUUID)")
-            createPath()
-            deleteWaypoint(lineID: smallestUUID)
-
-        }
-        
-        // if no waypoints say that
-        
-        // if waypoints find closest waypoint
-        
-        // rollout logic to deal with waypoints
-        
-        
-        // Find the closest sphere
-        
-        // delete the sphere
-        
-        // delete all lines, redraw all lines
     
-    }
+    
+    
+    
+    
     
     // Place a sphere
-    
     // if there are +4 spheres, make them green and add them to an entity array
     func placeSphere() {
         guard let arView = arView else { return }
@@ -312,7 +344,7 @@ class ARViewModel: ObservableObject {
 
                 print("The length of frameSpheres is: \(frameCount)")
                 
-                frameSpheres.append((sphereId, spherePosition))
+                frameSpheres.append((sphereId, spherePosition, model))
             }
         }
         
@@ -321,13 +353,9 @@ class ARViewModel: ObservableObject {
         else{
             
             // Setup the Sphere
-            let waypointID = UUID()
             let mesh = MeshResource.generateSphere(radius: 0.05)
             let material = SimpleMaterial(color: .green, roughness: 0.15, isMetallic: false)
             let model = ModelEntity(mesh: mesh, materials: [material])
-            
-            // Add the Sphere with ID to the array
-            pathEndpoints[waypointID] = model
             
             // Shoot a raycast out to get the position
             let raycastResult = arView.raycast(from: arView.center,
@@ -355,7 +383,7 @@ class ARViewModel: ObservableObject {
 
                 print("The length of frameSpheres is: \(frameCount)")
                 
-                waypointSpheres.append((sphereId, spherePosition))
+                waypointSpheres.append((sphereId, spherePosition, model))
                 
                 // This is different from frame because the path automically generates
                 if(waypointSpheres.count > 1){
@@ -365,7 +393,6 @@ class ARViewModel: ObservableObject {
             }
         }
     }
-    
 }
 
 struct ARViewContainer: UIViewRepresentable {
