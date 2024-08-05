@@ -62,7 +62,11 @@ struct ContentView: View {
                 Button(action: {
                     // Change app state
                     print("Sending waypoints now")
-                    arViewModel.printWaypoints()
+//                        arViewModel.printWaypoints()
+                    Task{
+                        await arViewModel.sendRequest()
+                    }
+
                 }) {
                     Text("Send Waypoints")
                         .padding()
@@ -109,7 +113,13 @@ class ARViewModel: ObservableObject {
     // Waypoint lines: UUID, models
     @Published var waypointSpheres: [(UUID, SIMD3<Float>, ModelEntity)] = []
     @Published var waypointLines: [(UUID, ModelEntity)] = []
-
+    
+    var waypointsArray: [[String: Float]] = []
+    
+    var centerPoint: SIMD2<Float> = SIMD2<Float>(0,0)
+    let xBounds: [(Int, Int)] = [(-1000, 1000)]
+    let zBounds: [(Int, Int)] = [(-1000, 1000)]
+    
     //                  //
     // Helper Functions //
     //                  //
@@ -121,15 +131,72 @@ class ARViewModel: ObservableObject {
         return (returnAngle, xdif, zdif)
     }
     
-    func printWaypoints(){
+    func returnWayPointsArray() -> [[String: Float]] {
         print("Waypoint Coordinates (x, z):")
+        waypointsArray = []
+        
         for (_, position, _) in waypointSpheres {
             let x = position.x
             let z = position.z
-            print("x: \(x), z: \(z)")
+            
+            waypointsArray.append(["x":x, "z":z])
         }
+        
+//        print(waypointsArray)
+        return waypointsArray
     }
     
+    // Asynchronous function to send a request
+
+    func sendRequest () async {
+        // Define the URL you want to request
+        let apiUrlStr = "http://192.168.0.226:8080/test"
+        // Create a URL object from the string
+        if let apiUrl = URL(string: apiUrlStr) {
+            
+            // Create a URLSession instance
+            let session = URLSession.shared
+            
+            // Define the data you want to upload
+//            let jsonPayload = ["key": "value"]
+            let jsonPayload = returnWayPointsArray()
+            
+            // Convert the JSON payload to Data
+            do {
+                
+                // Create a URLRequest with the URL and set the HTTP method to POST
+                var request = URLRequest(url: apiUrl)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                
+                let jsonData = try? JSONSerialization.data(withJSONObject: jsonPayload)
+                request.httpBody = jsonData
+
+                // Create an upload task using URLSessionUploadTask
+                let task = session.dataTask(with: request) { (data, response, error) in
+                    // Handle the response here
+                    
+                    // Check for errors if received from server
+                    if let error = error {
+                        print("Error: \(error)")
+                        return
+                    }
+                    
+                    // Check if data is available
+                    if let responseData = data {
+                        // Process the response data as needed
+                        let responseString = String(data: responseData, encoding: .utf8)
+                        print(responseString)
+                    }
+                }
+                // Resume the upload task to initiate the request
+                task.resume()
+            }
+        } else {
+            print("URL is invalid")
+        }
+
+    }
     
     //                       //
     //      Line Creators    //
@@ -143,8 +210,8 @@ class ARViewModel: ObservableObject {
         for i in 0...3 {
             print("=========================================")
             print("Iteration \(i)")
-            print("The current sphere is: \(frameSpheres[i])")
-            print("The next sphere is: \(frameSpheres[nextPoint])")
+//            print("The current sphere is: \(frameSpheres[i])")
+//            print("The next sphere is: \(frameSpheres[nextPoint])")
             
             // Create Lines
             let anchorEntity = AnchorEntity(world: frameSpheres[i].1)
@@ -180,8 +247,8 @@ class ARViewModel: ObservableObject {
         for i in 0...(waypointSpheres.count - 1) {
             print("--------------------------")
             print("Iteration \(i)")
-            print("The current sphere is: \(waypointSpheres[i])")
-            print("The next sphere is: \(waypointSpheres[nextPoint])")
+//            print("The current sphere is: \(waypointSpheres[i])")
+//            print("The next sphere is: \(waypointSpheres[nextPoint])")
             
             // Create Line
             
@@ -303,10 +370,6 @@ class ARViewModel: ObservableObject {
     }
     
 
-    
-    
-    
-    
     
     
     // Place a sphere
